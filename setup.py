@@ -12,6 +12,7 @@ with open("README.md") as f:
 
 setup(
     name="dpr",
+    packages=["dpr"],
     version="1.0.0",
     description="Facebook AI Research Open Domain Q&A Toolkit",
     url="https://github.com/facebookresearch/DPR/",
