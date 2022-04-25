@@ -81,10 +81,21 @@ def _parse_RuBQ_file(inputs: List[Dict[str, object]], paragraphs: List[Dict[str,
             "dataset": "rubq_2.0",
             "question": example_rubq['question_text'],
             "answers": [answer['label'] for answer in example_rubq['answers']],
-            "positive_ctxs": [paragraphs[p_uid] for p_uid in example_rubq['paragraphs_uids']['with_answer']],
-            "negative_ctxs": [paragraphs[p_uid] for p_uid in random.sample(negative_set, num_gold_examples)],
-            "hard_negative_ctxs": [
-                paragraphs[p_uid] for p_uid in example_rubq['paragraphs_uids']['all_related']
+            "positive_ctxs": [{
+                    "text": paragraphs[p_uid],
+                    "uid": p_uid
+                }
+                for p_uid in example_rubq['paragraphs_uids']['with_answer']],
+            "negative_ctxs": [{
+                    "text": paragraphs[p_uid],
+                    "uid": p_uid
+                }
+                for p_uid in random.sample(negative_set, num_gold_examples)],
+            "hard_negative_ctxs": [{
+                    "text": paragraphs[p_uid],
+                    "uid": p_uid
+                }
+                for p_uid in example_rubq['paragraphs_uids']['all_related']
                 if not p_uid in set(example_rubq['paragraphs_uids']['with_answer'])]
         })
     return res
