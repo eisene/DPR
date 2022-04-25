@@ -19,6 +19,12 @@ from torch import nn
 
 
 if transformers.__version__.startswith("4"):
+    # from transformers import RobertaConfig as BertConfig
+    # from transformers import RobertaModel as BertModel
+    # from transformers import AdamW
+    # from transformers import RobertaTokenizer as BertTokenizer
+    # from transformers import RobertaTokenizer
+
     from transformers import BertConfig, BertModel
     from transformers import AdamW
     from transformers import BertTokenizer
