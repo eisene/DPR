@@ -43,3 +43,11 @@ curatedtrec_train:
 curatedtrec_dev:
   _target_: dpr.data.biencoder_data.JsonQADataset
   file: data.retriever.curatedtrec-dev
+
+rubq_train:
+  _target_: dpr.data.biencoder_data.JsonQADataset
+  file: /home/eeisenst/workspace/DPR/downloads/data/retriever/rubq2-train.json
+
+rubq_dev:
+  _target_: dpr.data.biencoder_data.JsonQADataset
+  file: /home/eeisenst/workspace/DPR/downloads/data/retriever/rubq2-test.json
