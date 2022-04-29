@@ -74,9 +74,9 @@ def main():
     )
     parser.add_argument(
         "--op",
-        choices=["list_extensions", "unzip", "textify", "unzip_and_textify"],
+        choices=["list_extensions", "flatten", "flatten_and_textify"],
         type=str,
-        default="unzip_and_textify"
+        default="flatten_and_textify"
     )
     parser.add_argument(
         "--output_dir",
@@ -118,7 +118,7 @@ def main():
             print("=================")
             for ext in sorted(list(all_exts)):
                 print(ext)
-        elif args.op == "unzip":
+        elif args.op == "flatten":
             failed_fns = process_dir(
                 args.input_dir,
                 lambda fn, prefix:
