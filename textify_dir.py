@@ -125,7 +125,8 @@ def main():
                     shutil.copy(fn, os.path.join(args.output_dir, prefix + os.path.basename(fn))),
                 do_not_unzip=args.do_not_unzip)
 
-        with open(args.failed_fn_name, "w") as failed_f:
+        failed_out_dir = args.output_dir if args.output_dir is not None else '.'
+        with open(os.path.join(failed_out_dir, args.failed_fn_name), "w") as failed_f:
             failed_f.writelines([fn + "\n" for fn in sorted(list(failed_fns))])
 
 
