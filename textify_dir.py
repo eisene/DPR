@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
 import argparse
+from cgitb import text
 import logging
+from multiprocessing.sharedctypes import Value
 import os
 import glob
 import shutil
+import textract
 
 from tqdm import tqdm
 from tempfile import TemporaryDirectory
 from pyunpack import Archive, PatoolError
+from email.parser import Parser as EmailParser
+from email.policy import default
+
+import numpy as np
+from skimage import io
+from skimage.color import rgb2gray
+from skimage.transform import rotate
+
+from deskew import determine_skew
 
 
 logger = logging.getLogger(__name__)
@@ -25,6 +37,12 @@ zip_exts = {".7z", ".ace", ".alz", ".a", ".arc", ".arj", ".bz2", ".cab", ".Z", "
     ".dms", ".gz", ".lrz", ".lha", ".lzh", ".lz", ".lzma", ".lzo", ".rpm", ".rar", ".rz", ".tar",
     ".xz", ".zip", ".jar", ".zoo"}
 
+img_exts = {".gif", ".jpg", ".jpeg", ".png", ".tiff", ".tif"}     # ".pdf"
+
+parseable_exts = {".csv", ".doc", ".docx", ".eml", ".epub", ".gif", ".jpg", ".jpeg", ".json",
+    ".html", ".htm", ".mp3", ".msg", ".odt", ".ogg", ".pdf", ".png", ".pptx", ".ps", ".rtf",
+    ".tiff", ".tif", ".txt", ".wav", ".xlsx", ".xls"}
+
 
 def get_normalized_ext(fn):
     return os.path.splitext(fn)[1].lower()
@@ -32,6 +50,18 @@ def get_normalized_ext(fn):
 
 def is_zipfile(fn):
     return get_normalized_ext(fn) in zip_exts
+
+
+def is_image(fn):
+    return get_normalized_ext(fn) in img_exts
+
+
+def is_parseable(fn):
+    return get_normalized_ext(fn) in parseable_exts
+
+
+def _prefixed_fn(fn, prefix, output_dir):
+    return os.path.join(output_dir, prefix + os.path.basename(fn))
 
 
 def process_dir(input_dir, file_op_lambda, temp_dir=None, prefix="", do_not_unzip=False):
@@ -60,9 +90,45 @@ def process_dir(input_dir, file_op_lambda, temp_dir=None, prefix="", do_not_unzi
                         do_not_unzip=do_not_unzip))
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
     for non_zip_fn in tqdm([fn for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]):
-        file_op_lambda(non_zip_fn, prefix)
+        res = file_op_lambda(non_zip_fn, prefix)
+        if res is not None:
+            logger.warning(f"Failed to process {non_zip_fn} with prefix \"{prefix}\"")
+            failed_fns.add(f"{res}: {prefix}{non_zip_fn}")
     
     return failed_fns
+
+
+def deskew(fn_in, fn_out):
+    image = io.imread(fn_in)
+    grayscale = io.imread(fn_in, as_gray=True)
+    if min(image.shape) == 1:
+        shutil.copy(fn_in, fn_out)
+        return
+    angle = determine_skew(grayscale)
+    rotated = rotate(image, angle, resize=True) * 255
+    io.imsave(fn_out, rotated.astype(np.uint8))
+
+
+def extract_text(fn):
+    if get_normalized_ext(fn) == ".doc":
+        try:
+            return textract.process(fn, language="rus")
+        except textract.exceptions.ShellError:
+            fn_new = os.path.splitext(fn)[0] + ".rtf"
+            shutil.copy(fn, fn_new)
+            return textract.process(fn_new, language="rus")
+
+    if get_normalized_ext(fn) == ".eml":
+        with open(fn) as stream:
+            parser = EmailParser(policy=default)
+            message = parser.parse(stream)
+        text_content = []
+        for part in message.walk():
+            if part.get_content_type().startswith('text/plain'):
+                text_content.append(part.get_content())
+        return '\n\n'.join(text_content)
+
+    return textract.process(fn, language="rus")
 
 
 def main():
@@ -122,8 +188,34 @@ def main():
             failed_fns = process_dir(
                 args.input_dir,
                 lambda fn, prefix:
-                    shutil.copy(fn, os.path.join(args.output_dir, prefix + os.path.basename(fn))),
+                    shutil.copy(fn, _prefixed_fn(fn, prefix, args.output_dir)),
                 do_not_unzip=args.do_not_unzip)
+        elif args.op == "flatten_and_textify":
+            def textify_fn(fn, prefix):
+                if not is_parseable(fn):
+                    return None
+                try:
+                    if is_image(fn):
+                        fn_in_base, fn_in_ext = os.path.splitext(fn)
+                        fn_out = fn_in_base + "_deskewed" + fn_in_ext
+                        deskew(fn, fn_out)
+                    text = extract_text(fn)
+                    if type(text) is bytes:
+                        text = text.decode(encoding="utf-8")
+                    text = text.replace("\n", " ")
+                    with open(_prefixed_fn(fn, prefix, args.output_dir), 'w') as f:
+                        f.write(text)
+                    return None
+                except (AttributeError, UnicodeDecodeError):
+                    return "Bad file"
+
+
+            failed_fns = process_dir(
+                args.input_dir,
+                textify_fn,
+                do_not_unzip=args.do_not_unzip)
+        else:
+            raise ValueError("Unknown operation: " + args.op)
 
         failed_out_dir = args.output_dir if args.output_dir is not None else '.'
         with open(os.path.join(failed_out_dir, args.failed_fn_name), "w") as failed_f:
