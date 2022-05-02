@@ -172,54 +172,53 @@ def main():
     if not os.path.isdir(args.input_dir):
         raise Exception("Not a directory: " + args.input_dir)
 
-    with TemporaryDirectory(dir=args.temp_dir) as temp_dir:
-        if args.op == "list_extensions":
-            all_exts = set()
-            failed_fns = process_dir(
-                args.input_dir,
-                lambda fn, _: all_exts.add(get_normalized_ext(fn)),
-                do_not_unzip=args.do_not_unzip)
-            print("")
-            print("Found extensions:")
-            print("=================")
-            for ext in sorted(list(all_exts)):
-                print(ext)
-        elif args.op == "flatten":
-            failed_fns = process_dir(
-                args.input_dir,
-                lambda fn, prefix:
-                    shutil.copy(fn, _prefixed_fn(fn, prefix, args.output_dir)),
-                do_not_unzip=args.do_not_unzip)
-        elif args.op == "flatten_and_textify":
-            def textify_fn(fn, prefix):
-                if not is_parseable(fn):
-                    return None
-                try:
-                    if is_image(fn):
-                        fn_in_base, fn_in_ext = os.path.splitext(fn)
-                        fn_out = fn_in_base + "_deskewed" + fn_in_ext
-                        deskew(fn, fn_out)
-                    text = extract_text(fn)
-                    if type(text) is bytes:
-                        text = text.decode(encoding="utf-8")
-                    text = text.replace("\n", " ")
-                    with open(_prefixed_fn(fn, prefix, args.output_dir), 'w') as f:
-                        f.write(text)
-                    return None
-                except (AttributeError, UnicodeDecodeError):
-                    return "Bad file"
+    if args.op == "list_extensions":
+        all_exts = set()
+        failed_fns = process_dir(
+            args.input_dir,
+            lambda fn, _: all_exts.add(get_normalized_ext(fn)),
+            do_not_unzip=args.do_not_unzip)
+        print("")
+        print("Found extensions:")
+        print("=================")
+        for ext in sorted(list(all_exts)):
+            print(ext)
+    elif args.op == "flatten":
+        failed_fns = process_dir(
+            args.input_dir,
+            lambda fn, prefix:
+                shutil.copy(fn, _prefixed_fn(fn, prefix, args.output_dir)),
+            do_not_unzip=args.do_not_unzip)
+    elif args.op == "flatten_and_textify":
+        def textify_fn(fn, prefix):
+            if not is_parseable(fn):
+                return None
+            try:
+                if is_image(fn):
+                    fn_in_base, fn_in_ext = os.path.splitext(fn)
+                    fn_out = fn_in_base + "_deskewed" + fn_in_ext
+                    deskew(fn, fn_out)
+                text = extract_text(fn)
+                if type(text) is bytes:
+                    text = text.decode(encoding="utf-8")
+                text = text.replace("\n", " ")
+                with open(_prefixed_fn(fn, prefix, args.output_dir), 'w') as f:
+                    f.write(text)
+                return None
+            except (AttributeError, UnicodeDecodeError):
+                return "Bad file"
 
 
-            failed_fns = process_dir(
-                args.input_dir,
-                textify_fn,
-                do_not_unzip=args.do_not_unzip)
-        else:
-            raise ValueError("Unknown operation: " + args.op)
+        failed_fns = process_dir(
+            args.input_dir,
+            textify_fn,
+            do_not_unzip=args.do_not_unzip)
+    else:
+        raise ValueError("Unknown operation: " + args.op)
 
-        failed_out_dir = args.output_dir if args.output_dir is not None else '.'
-        with open(os.path.join(failed_out_dir, args.failed_fn_name), "w") as failed_f:
-            failed_f.writelines([fn + "\n" for fn in sorted(list(failed_fns))])
+    failed_out_dir = args.output_dir if args.output_dir is not None else '.'
+    with open(os.path.join(failed_out_dir, args.failed_fn_name), "w") as failed_f:
+        failed_f.writelines([fn + "\n" for fn in sorted(list(failed_fns))])
 
 
 if __name__ == "__main__":
