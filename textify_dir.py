@@ -9,7 +9,7 @@ import pytesseract
 import warnings
 
 from tqdm import tqdm
-from multiprocessing import Pool, TimeoutError
+from multiprocessing import Pool, Lock, TimeoutError
 from tempfile import TemporaryDirectory
 from pyunpack import Archive, PatoolError
 from email.parser import Parser as EmailParser
@@ -45,6 +45,8 @@ parseable_exts = {".csv", ".doc", ".docx", ".eml", ".epub", ".gif", ".jpg", ".jp
     ".html", ".htm", ".mp3", ".msg", ".odt", ".ogg", ".pdf", ".png", ".pptx", ".ps", ".rtf",
     ".tiff", ".tif", ".txt", ".wav", ".xlsx", ".xls"}
 
+fs_lock = Lock()
+
 
 def get_normalized_ext(fn):
     return os.path.splitext(fn)[1].lower()
@@ -64,6 +66,26 @@ def is_parseable(fn):
 
 def _prefixed_fn(fn, prefix, output_dir):
     return os.path.join(output_dir, prefix + os.path.basename(fn))
+
+
+def _postfixed_fn(fn, postfix):
+    if postfix == 0:
+        return fn
+    else:
+        return fn + '.' + str(postfix)
+
+
+def _non_conflicting_fn(fn, output_dir):
+    res_fn = os.path.join(output_dir, os.path.basename(fn))
+    postfix = 0
+    while os.path.isfile(_postfixed_fn(res_fn, postfix)):
+        postfix += 1
+    return _postfixed_fn(res_fn, postfix)
+
+
+def _init_pool_processes(the_lock):
+    global fs_lock
+    fs_lock = the_lock
 
 
 def process_dir(
@@ -103,7 +125,7 @@ def process_dir(
                         temp_dir=temp_dir,
                         do_not_unzip=do_not_unzip))
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
-    with Pool(processes=num_pool_procs) as pool:
+    with Pool(processes=num_pool_procs, initializer=_init_pool_processes, initargs=(fs_lock,)) as pool:
         jobs = [
             (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), fn)
             for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]
@@ -158,7 +180,13 @@ def extract_text(fn):
     return textract.process(fn, language="rus")
 
 
-def textify_fn(fn, prefix, output_dir):
+def safe_copy(fn, _, output_dir):
+    fs_lock.acquire()
+    shutil.copy(fn, _non_conflicting_fn(fn, output_dir))
+    fs_lock.release()
+
+
+def textify_fn(fn, _, output_dir):
     if not is_parseable(fn):
         return None
     try:
@@ -171,8 +199,9 @@ def textify_fn(fn, prefix, output_dir):
         if type(text) is bytes:
             text = text.decode(encoding="utf-8")
         text = text.replace("\n", " ")
-        with open(_prefixed_fn(fn, prefix, output_dir), 'w') as f:
-            f.write(text)
+        with fs_lock:
+            with open(_non_conflicting_fn(fn, output_dir), 'w') as f:
+                f.write(text)
         return None
     except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, BadZipFile):
         return "Bad file"
@@ -259,8 +288,7 @@ def main():
         failed_fns = process_dir(
             args.input_dir,
             args.output_dir,
-            lambda fn, prefix, output_dir:
-                shutil.copy(fn, _prefixed_fn(fn, prefix, output_dir)),
+            lambda fn, _, output_dir: safe_copy(fn, output_dir),
             num_pool_procs=args.num_processes,
             pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
