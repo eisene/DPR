@@ -16,6 +16,7 @@ from email.parser import Parser as EmailParser
 from email.policy import default
 from openpyxl import load_workbook
 from xlrd.compdoc import CompDocError
+from pytesseract.pytesseract import TesseractError
 
 import numpy as np
 from skimage import io
@@ -215,7 +216,7 @@ def main():
                 with open(_prefixed_fn(fn, prefix, args.output_dir), 'w') as f:
                     f.write(text)
                 return None
-            except (AttributeError, UnicodeDecodeError, KeyError, CompDocError):
+            except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError):
                 return "Bad file"
 
 
