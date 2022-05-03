@@ -20,6 +20,7 @@ from pytesseract.pytesseract import TesseractError
 from zipfile import BadZipFile
 
 import numpy as np
+import pandas as pd
 from skimage import io
 from skimage.transform import rotate
 
@@ -101,29 +102,41 @@ def process_dir(
     all_files = glob.glob(os.path.join(input_dir, "**"), recursive=True)
 
     zip_files = [fn for fn in all_files if is_zipfile(fn)]
-    failed_fns = set()
+    file_status = {
+        "input_path": [],
+        "input_filename": [],
+        "output_filename": [],
+        "status": []
+    }
     if len(zip_files) > 0:
         logger.info(f"Processing archives in {input_dir} with prefix \"{prefix}\"...")
         for zip_fn in tqdm(zip_files, leave=False, desc=prefix):
             with TemporaryDirectory(dir=temp_dir) as temp_dir_name:
+                file_status["input_path"].append(prefix)
+                file_status["input_filename"].append(zip_fn)
+                file_status["output_filename"].append("")
                 try:
                     Archive(zip_fn).extractall(os.path.join(temp_dir_name))
                 except PatoolError:
                     logger.warning(f"Failed to extract {zip_fn} with prefix \"{prefix}\"")
-                    failed_fns.add("Failed: " + prefix + zip_fn)
+                    file_status["status"].append("Unzip failed")
+                    continue
                 except RuntimeError:
                     logger.warning(f"Encrypted: {zip_fn} with prefix \"{prefix}\"")
-                    failed_fns.add("Encrypted: " + prefix + zip_fn)
-                failed_fns = failed_fns.union(
-                    process_dir(
-                        temp_dir_name,
-                        output_dir,
-                        file_op_lambda,
-                        num_pool_procs=num_pool_procs,
-                        pool_timeout=pool_timeout,
-                        prefix=prefix + os.path.basename(zip_fn) + "_",
-                        temp_dir=temp_dir,
-                        do_not_unzip=do_not_unzip))
+                    file_status["status"].append("Zip file encrypted")
+                    continue
+                file_status["status"].append("Unzipped successfully")
+                zip_file_status = process_dir(
+                    temp_dir_name,
+                    output_dir,
+                    file_op_lambda,
+                    num_pool_procs=num_pool_procs,
+                    pool_timeout=pool_timeout,
+                    prefix=prefix + os.path.basename(zip_fn) + "/",
+                    temp_dir=temp_dir,
+                    do_not_unzip=do_not_unzip)
+                for key, val in file_status.items():
+                    file_status[key] = val + zip_file_status[key]
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
     with Pool(processes=num_pool_procs, initializer=_init_pool_processes, initargs=(fs_lock,)) as pool:
         jobs = [
@@ -131,14 +144,19 @@ def process_dir(
             for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]
         for job, non_zip_fn in tqdm(jobs, leave=False):
             try:
-                res = job.get(timeout=pool_timeout)
+                output_fn, res = job.get(timeout=pool_timeout)
             except TimeoutError:
                 res = "Timeout"
+            file_status["input_path"].append(prefix)
+            file_status["input_filename"].append(non_zip_fn)
+            file_status["output_filename"].append(output_fn)
             if res is not None:
                 logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
-                failed_fns.add(f"{res}: {prefix}{non_zip_fn}")
+                file_status["status"].append(res)
+            else:
+                file_status["status"].append("Success")
     
-    return failed_fns
+    return file_status
 
 
 def deskew(fn_in, fn_out):
@@ -181,14 +199,15 @@ def extract_text(fn):
 
 
 def safe_copy(fn, _, output_dir):
-    fs_lock.acquire()
-    shutil.copy(fn, _non_conflicting_fn(fn, output_dir))
-    fs_lock.release()
+    with fs_lock:
+        output_fn = _non_conflicting_fn(fn, output_dir)
+        shutil.copy(fn, output_fn)
+    return output_fn
 
 
 def textify_fn(fn, _, output_dir):
     if not is_parseable(fn):
-        return None
+        return "Not parsed", None
     try:
         if is_image(fn):
             fn_in_base, fn_in_ext = os.path.splitext(fn)
@@ -200,11 +219,12 @@ def textify_fn(fn, _, output_dir):
             text = text.decode(encoding="utf-8")
         text = text.replace("\n", " ")
         with fs_lock:
-            with open(_non_conflicting_fn(fn, output_dir), 'w') as f:
+            output_fn = _non_conflicting_fn(fn, output_dir)
+            with open(output_fn, 'w') as f:
                 f.write(text)
-        return None
+        return output_fn, None
     except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, BadZipFile):
-        return "Bad file"
+        return "", "Bad file"
 
 
 def main():
@@ -233,10 +253,10 @@ def main():
         help="Directory to use for creating temporary files in during flattening",
     )
     parser.add_argument(
-        "--failed_fn_name",
+        "--file_status_name",
         type=str,
-        default="./textify_extract_failures",
-        help="Filename to store failed to extract archive names to",
+        default="textify_file_status.csv",
+        help="CSV filename to store status of extracted files to",
     )
     parser.add_argument(
         "--do_not_unzip",
@@ -272,10 +292,14 @@ def main():
 
     if args.op == "list_extensions":
         all_exts = set()
-        failed_fns = process_dir(
+        def _add_ext(fn):
+            all_exts.add(get_normalized_ext(fn))
+            return "", None
+
+        file_status = process_dir(
             args.input_dir,
             args.output_dir,
-            lambda fn, _1, _2: all_exts.add(get_normalized_ext(fn)),
+            lambda fn, _1, _2: _add_ext(fn),
             num_pool_procs=args.num_processes,
             pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
@@ -285,7 +309,7 @@ def main():
         for ext in sorted(list(all_exts)):
             print(ext)
     elif args.op == "flatten":
-        failed_fns = process_dir(
+        file_status = process_dir(
             args.input_dir,
             args.output_dir,
             lambda fn, _, output_dir: safe_copy(fn, output_dir),
@@ -293,7 +317,7 @@ def main():
             pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
     elif args.op == "flatten_and_textify":
-        failed_fns = process_dir(
+        file_status = process_dir(
             args.input_dir,
             args.output_dir,
             textify_fn,
@@ -304,8 +328,9 @@ def main():
         raise ValueError("Unknown operation: " + args.op)
 
     failed_out_dir = args.output_dir if args.output_dir is not None else '.'
-    with open(os.path.join(failed_out_dir, args.failed_fn_name), "w") as failed_f:
-        failed_f.writelines([fn + "\n" for fn in sorted(list(failed_fns))])
+    pd \
+        .DataFrame(file_status) \
+        .to_csv(os.path.join(failed_out_dir, args.file_status_name), index=False)
 
 
 if __name__ == "__main__":
