@@ -10,6 +10,7 @@ import textract
 import pytesseract
 
 from tqdm import tqdm
+from multiprocessing import Pool, TimeoutError
 from tempfile import TemporaryDirectory
 from pyunpack import Archive, PatoolError
 from email.parser import Parser as EmailParser
@@ -68,7 +69,16 @@ def _prefixed_fn(fn, prefix, output_dir):
     return os.path.join(output_dir, prefix + os.path.basename(fn))
 
 
-def process_dir(input_dir, file_op_lambda, temp_dir=None, prefix="", do_not_unzip=False):
+def process_dir(
+    input_dir,
+    output_dir,
+    file_op_lambda,
+    num_pool_procs=20,
+    pool_timeout=60,
+    temp_dir=None,
+    prefix="",
+    do_not_unzip=False
+):
     all_files = glob.glob(os.path.join(input_dir, "**"), recursive=True)
 
     zip_files = [fn for fn in all_files if is_zipfile(fn)]
@@ -88,16 +98,26 @@ def process_dir(input_dir, file_op_lambda, temp_dir=None, prefix="", do_not_unzi
                 failed_fns = failed_fns.union(
                     process_dir(
                         temp_dir_name,
+                        output_dir,
                         file_op_lambda,
+                        num_pool_procs=num_pool_procs,
+                        pool_timeout=pool_timeout,
                         prefix=prefix + os.path.basename(zip_fn) + "_",
                         temp_dir=temp_dir,
                         do_not_unzip=do_not_unzip))
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
-    for non_zip_fn in tqdm([fn for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]):
-        res = file_op_lambda(non_zip_fn, prefix)
-        if res is not None:
-            logger.warning(f"Failed to process {non_zip_fn} with prefix \"{prefix}\"")
-            failed_fns.add(f"{res}: {prefix}{non_zip_fn}")
+    with Pool(processes=num_pool_procs) as pool:
+        jobs = [
+            (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), fn)
+            for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]
+        for job, non_zip_fn in tqdm(jobs):
+            try:
+                res = job.get(timeout=pool_timeout)
+            except TimeoutError:
+                res = "Timeout"
+            if res is not None:
+                logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
+                failed_fns.add(f"{res}: {prefix}{non_zip_fn}")
     
     return failed_fns
 
@@ -141,6 +161,26 @@ def extract_text(fn):
     return textract.process(fn, language="rus")
 
 
+def textify_fn(fn, prefix, output_dir):
+    if not is_parseable(fn):
+        return None
+    try:
+        if is_image(fn):
+            fn_in_base, fn_in_ext = os.path.splitext(fn)
+            fn_out = fn_in_base + "_deskewed" + fn_in_ext
+            deskew(fn, fn_out)
+            fn = fn_out
+        text = extract_text(fn)
+        if type(text) is bytes:
+            text = text.decode(encoding="utf-8")
+        text = text.replace("\n", " ")
+        with open(_prefixed_fn(fn, prefix, output_dir), 'w') as f:
+            f.write(text)
+        return None
+    except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError):
+        return "Bad file"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -177,6 +217,18 @@ def main():
         action="store_true",
         help="Do not unzip any zip files in the input_dir",
     )
+    parser.add_argument(
+        "--num_processes",
+        type=int,
+        default=20,
+        help="Number of parallel processes to use for extraction",
+    )
+    parser.add_argument(
+        "--extraction_timeout",
+        type=int,
+        default=60,
+        help="Number of seconds for extraction timeout",
+    )
     args = parser.parse_args()
 
     if not os.path.isdir(args.input_dir):
@@ -186,7 +238,10 @@ def main():
         all_exts = set()
         failed_fns = process_dir(
             args.input_dir,
-            lambda fn, _: all_exts.add(get_normalized_ext(fn)),
+            args.output_dir,
+            lambda fn, _1, _2: all_exts.add(get_normalized_ext(fn)),
+            num_pool_procs=args.num_processes,
+            pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
         print("")
         print("Found extensions:")
@@ -196,33 +251,19 @@ def main():
     elif args.op == "flatten":
         failed_fns = process_dir(
             args.input_dir,
-            lambda fn, prefix:
-                shutil.copy(fn, _prefixed_fn(fn, prefix, args.output_dir)),
+            args.output_dir,
+            lambda fn, prefix, output_dir:
+                shutil.copy(fn, _prefixed_fn(fn, prefix, output_dir)),
+            num_pool_procs=args.num_processes,
+            pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
     elif args.op == "flatten_and_textify":
-        def textify_fn(fn, prefix):
-            if not is_parseable(fn):
-                return None
-            try:
-                if is_image(fn):
-                    fn_in_base, fn_in_ext = os.path.splitext(fn)
-                    fn_out = fn_in_base + "_deskewed" + fn_in_ext
-                    deskew(fn, fn_out)
-                    fn = fn_out
-                text = extract_text(fn)
-                if type(text) is bytes:
-                    text = text.decode(encoding="utf-8")
-                text = text.replace("\n", " ")
-                with open(_prefixed_fn(fn, prefix, args.output_dir), 'w') as f:
-                    f.write(text)
-                return None
-            except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError):
-                return "Bad file"
-
-
         failed_fns = process_dir(
             args.input_dir,
+            args.output_dir,
             textify_fn,
+            num_pool_procs=args.num_processes,
+            pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
     else:
         raise ValueError("Unknown operation: " + args.op)
