@@ -8,6 +8,7 @@ import glob
 import shutil
 import textract
 import pytesseract
+import warnings
 
 from tqdm import tqdm
 from multiprocessing import Pool, TimeoutError
@@ -28,10 +29,10 @@ from deskew import determine_skew
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.ERROR)
 
 consoleHandler = logging.StreamHandler()
-consoleHandler.setLevel(logging.INFO)
+consoleHandler.setLevel(logging.ERROR)
 
 logger.addHandler(consoleHandler)
 
@@ -85,7 +86,7 @@ def process_dir(
     failed_fns = set()
     if len(zip_files) > 0:
         logger.info(f"Processing archives in {input_dir} with prefix \"{prefix}\"...")
-        for zip_fn in tqdm(zip_files):
+        for zip_fn in tqdm(zip_files, leave=False, desc=prefix):
             with TemporaryDirectory(dir=temp_dir) as temp_dir_name:
                 try:
                     Archive(zip_fn).extractall(os.path.join(temp_dir_name))
@@ -110,7 +111,7 @@ def process_dir(
         jobs = [
             (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), fn)
             for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]
-        for job, non_zip_fn in tqdm(jobs):
+        for job, non_zip_fn in tqdm(jobs, leave=False):
             try:
                 res = job.get(timeout=pool_timeout)
             except TimeoutError:
@@ -229,7 +230,17 @@ def main():
         default=600,
         help="Number of seconds for extraction timeout",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print warnings during processing in addition to log file",
+    )
     args = parser.parse_args()
+
+    if args.verbose:
+        logger.setLevel(logging.INFO)
+    else:
+        warnings.filterwarnings("ignore")
 
     if not os.path.isdir(args.input_dir):
         raise Exception("Not a directory: " + args.input_dir)
