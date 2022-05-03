@@ -143,6 +143,7 @@ def process_dir(
             (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), fn)
             for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]
         for job, non_zip_fn in tqdm(jobs, leave=False):
+            output_fn = ""
             try:
                 output_fn, res = job.get(timeout=pool_timeout)
             except TimeoutError:
@@ -223,7 +224,8 @@ def textify_fn(fn, _, output_dir):
             with open(output_fn, 'w') as f:
                 f.write(text)
         return output_fn, None
-    except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, BadZipFile):
+    except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, ValueError,
+        BadZipFile):
         return "", "Bad file"
 
 
