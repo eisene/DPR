@@ -221,7 +221,7 @@ def main():
     parser.add_argument(
         "--num_processes",
         type=int,
-        default=20,
+        default=10,
         help="Number of parallel processes to use for extraction",
     )
     parser.add_argument(
