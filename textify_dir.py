@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-from cgitb import text
 import logging
-from multiprocessing.sharedctypes import Value
 import os
 import glob
 import shutil
@@ -19,13 +17,11 @@ from email.policy import default
 from openpyxl import load_workbook
 from xlrd.compdoc import CompDocError
 from pytesseract.pytesseract import TesseractError
+from zipfile import BadZipFile
 
 import numpy as np
 from skimage import io
-from skimage.color import rgb2gray
 from skimage.transform import rotate
-
-from deskew import determine_skew
 
 
 logger = logging.getLogger(__name__)
@@ -178,7 +174,7 @@ def textify_fn(fn, prefix, output_dir):
         with open(_prefixed_fn(fn, prefix, output_dir), 'w') as f:
             f.write(text)
         return None
-    except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError):
+    except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, BadZipFile):
         return "Bad file"
 
 
