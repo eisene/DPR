@@ -1,3 +1,5 @@
+*.wmf
+
 # Custom
 /downloads
 /outputs
