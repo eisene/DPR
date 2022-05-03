@@ -13,6 +13,8 @@ from tempfile import TemporaryDirectory
 from pyunpack import Archive, PatoolError
 from email.parser import Parser as EmailParser
 from email.policy import default
+from openpyxl import load_workbook
+from xlrd.compdoc import CompDocError
 
 import numpy as np
 from skimage import io
@@ -128,6 +130,15 @@ def extract_text(fn):
                 text_content.append(part.get_content())
         return '\n\n'.join(text_content)
 
+    if get_normalized_ext(fn) == ".xlsx":
+        cells_text = []
+        wb = load_workbook(filename=fn)
+        for sheet_name in wb.sheetnames:
+            worksheet = wb[sheet_name]
+            cells_text += [str(cell_val) for row_vals in worksheet.values for cell_val in row_vals if cell_val is not None]
+        wb.close()
+        return '\n'.join(cells_text)
+
     return textract.process(fn, language="rus")
 
 
@@ -205,7 +216,7 @@ def main():
                 with open(_prefixed_fn(fn, prefix, args.output_dir), 'w') as f:
                     f.write(text)
                 return None
-            except (AttributeError, UnicodeDecodeError):
+            except (AttributeError, UnicodeDecodeError, KeyError, CompDocError):
                 return "Bad file"
 
 
