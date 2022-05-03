@@ -226,7 +226,7 @@ def main():
     parser.add_argument(
         "--extraction_timeout",
         type=int,
-        default=60,
+        default=600,
         help="Number of seconds for extraction timeout",
     )
     args = parser.parse_args()
