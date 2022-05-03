@@ -7,6 +7,7 @@ import os
 import glob
 import shutil
 import textract
+import pytesseract
 
 from tqdm import tqdm
 from tempfile import TemporaryDirectory
@@ -101,12 +102,9 @@ def process_dir(input_dir, file_op_lambda, temp_dir=None, prefix="", do_not_unzi
 
 
 def deskew(fn_in, fn_out):
+    osd = pytesseract.image_to_osd(fn_in, output_type=pytesseract.Output.DICT)
+    angle = osd['orientation']
     image = io.imread(fn_in)
-    grayscale = io.imread(fn_in, as_gray=True)
-    if min(image.shape) == 1:
-        shutil.copy(fn_in, fn_out)
-        return
-    angle = determine_skew(grayscale)
     rotated = rotate(image, angle, resize=True) * 255
     io.imsave(fn_out, rotated.astype(np.uint8))
 
@@ -209,6 +207,7 @@ def main():
                     fn_in_base, fn_in_ext = os.path.splitext(fn)
                     fn_out = fn_in_base + "_deskewed" + fn_in_ext
                     deskew(fn, fn_out)
+                    fn = fn_out
                 text = extract_text(fn)
                 if type(text) is bytes:
                     text = text.decode(encoding="utf-8")
