@@ -106,7 +106,8 @@ def process_dir(
         "input_path": [],
         "input_filename": [],
         "output_filename": [],
-        "status": []
+        "status": [],
+        "details": []
     }
     if len(zip_files) > 0:
         logger.info(f"Processing archives in {input_dir} with prefix \"{prefix}\"...")
@@ -126,6 +127,7 @@ def process_dir(
                     file_status["status"].append("Zip file encrypted")
                     continue
                 file_status["status"].append("Unzipped successfully")
+                file_status["details"].append("")
                 zip_file_status = process_dir(
                     temp_dir_name,
                     output_dir,
@@ -145,7 +147,7 @@ def process_dir(
         for job, non_zip_fn in tqdm(jobs, leave=False):
             output_fn = ""
             try:
-                output_fn, res = job.get(timeout=pool_timeout)
+                output_fn, res, details = job.get(timeout=pool_timeout)
             except TimeoutError:
                 res = "Timeout"
             file_status["input_path"].append(prefix)
@@ -154,8 +156,10 @@ def process_dir(
             if res is not None:
                 logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
                 file_status["status"].append(res)
+                file_status["details"].append(details)
             else:
                 file_status["status"].append("Success")
+                file_status["details"].append("")
     
     return file_status
 
@@ -199,16 +203,9 @@ def extract_text(fn):
     return textract.process(fn, language="rus")
 
 
-def safe_copy(fn, _, output_dir):
-    with fs_lock:
-        output_fn = _non_conflicting_fn(fn, output_dir)
-        shutil.copy(fn, output_fn)
-    return output_fn
-
-
 def textify_fn(fn, _, output_dir):
     if not is_parseable(fn):
-        return "Not parsed", None
+        return "Not parsed", None, None
     try:
         if is_image(fn):
             fn_in_base, fn_in_ext = os.path.splitext(fn)
@@ -223,10 +220,9 @@ def textify_fn(fn, _, output_dir):
             output_fn = _non_conflicting_fn(fn, output_dir)
             with open(output_fn, 'w') as f:
                 f.write(text)
-        return output_fn, None
-    except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, ValueError,
-        BadZipFile, textract.exceptions.ShellError):
-        return "", "Bad file"
+        return output_fn, None, None
+    except Exception as e:
+        return "", type(e).__name__, str(e)
 
 
 def main():
@@ -296,7 +292,7 @@ def main():
         all_exts = set()
         def _add_ext(fn):
             all_exts.add(get_normalized_ext(fn))
-            return "", None
+            return "", None, None
 
         file_status = process_dir(
             args.input_dir,
@@ -311,6 +307,12 @@ def main():
         for ext in sorted(list(all_exts)):
             print(ext)
     elif args.op == "flatten":
+        def safe_copy(fn, _, output_dir):
+            with fs_lock:
+                output_fn = _non_conflicting_fn(fn, output_dir)
+                shutil.copy(fn, output_fn)
+            return output_fn, None, None
+
         file_status = process_dir(
             args.input_dir,
             args.output_dir,
