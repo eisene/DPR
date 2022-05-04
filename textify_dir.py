@@ -225,7 +225,7 @@ def textify_fn(fn, _, output_dir):
                 f.write(text)
         return output_fn, None
     except (AttributeError, UnicodeDecodeError, KeyError, CompDocError, TesseractError, IndexError, ValueError,
-        BadZipFile):
+        BadZipFile, textract.exceptions.ShellError):
         return "", "Bad file"
 
 
