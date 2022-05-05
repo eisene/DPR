@@ -149,7 +149,7 @@ def process_dir(
             try:
                 output_fn, res, details = job.get(timeout=pool_timeout)
             except TimeoutError:
-                res = "Timeout"
+                res, details = "Timeout", ""
             file_status["input_path"].append(prefix)
             file_status["input_filename"].append(non_zip_fn)
             file_status["output_filename"].append(output_fn)
