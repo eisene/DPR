@@ -97,7 +97,8 @@ def process_dir(
     pool_timeout=60,
     temp_dir=None,
     prefix="",
-    do_not_unzip=False
+    do_not_unzip=False,
+    already_processed=set()
 ):
     all_files = glob.glob(os.path.join(input_dir, "**"), recursive=True)
 
@@ -114,7 +115,7 @@ def process_dir(
         for zip_fn in tqdm(zip_files, leave=False, desc=prefix):
             with TemporaryDirectory(dir=temp_dir) as temp_dir_name:
                 file_status["input_path"].append(prefix)
-                file_status["input_filename"].append(zip_fn)
+                file_status["input_filename"].append(os.path.basename(zip_fn))
                 file_status["output_filename"].append("")
                 try:
                     Archive(zip_fn).extractall(os.path.join(temp_dir_name))
@@ -136,14 +137,19 @@ def process_dir(
                     pool_timeout=pool_timeout,
                     prefix=prefix + os.path.basename(zip_fn) + "/",
                     temp_dir=temp_dir,
-                    do_not_unzip=do_not_unzip)
+                    do_not_unzip=do_not_unzip,
+                    already_processed=already_processed)
                 for key, val in file_status.items():
                     file_status[key] = val + zip_file_status[key]
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
     with Pool(processes=num_pool_procs, initializer=_init_pool_processes, initargs=(fs_lock,)) as pool:
         jobs = [
-            (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), fn)
-            for fn in all_files if not is_zipfile(fn) and os.path.isfile(fn)]
+            (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), os.path.basename(fn))
+            for fn in all_files
+            if
+                not is_zipfile(fn) and
+                os.path.isfile(fn) and
+                not (prefix + os.path.basename(fn)) in already_processed]
         for job, non_zip_fn in tqdm(jobs, leave=False):
             output_fn = ""
             try:
@@ -262,6 +268,11 @@ def main():
         help="Do not unzip any zip files in the input_dir",
     )
     parser.add_argument(
+        "--force_restart",
+        action="store_true",
+        help="Do not skip files already in file status csv",
+    )
+    parser.add_argument(
         "--num_processes",
         type=int,
         default=10,
@@ -288,13 +299,16 @@ def main():
     if not os.path.isdir(args.input_dir):
         raise Exception("Not a directory: " + args.input_dir)
 
+    failed_out_dir = args.output_dir if args.output_dir is not None else '.'
+    file_status_csv = os.path.join(failed_out_dir, args.file_status_name)
+
     if args.op == "list_extensions":
         all_exts = set()
         def _add_ext(fn):
             all_exts.add(get_normalized_ext(fn))
             return "", None, None
 
-        file_status = process_dir(
+        process_dir(
             args.input_dir,
             args.output_dir,
             lambda fn, _1, _2: _add_ext(fn),
@@ -313,7 +327,7 @@ def main():
                 shutil.copy(fn, output_fn)
             return output_fn, None, None
 
-        file_status = process_dir(
+        process_dir(
             args.input_dir,
             args.output_dir,
             lambda fn, _, output_dir: safe_copy(fn, output_dir),
@@ -321,20 +335,31 @@ def main():
             pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip)
     elif args.op == "flatten_and_textify":
+        logger.info("Loading already processed files from file status csv...")
+        already_processed = set()
+        if not args.force_restart and os.path.isfile(file_status_csv):
+            already_processed = set(
+                pd \
+                    .read_csv(file_status_csv) \
+                    .fillna("") \
+                    .apply(lambda row: row.input_path + row.input_filename, axis=1).tolist()
+            )
+
         file_status = process_dir(
             args.input_dir,
             args.output_dir,
             textify_fn,
             num_pool_procs=args.num_processes,
             pool_timeout=args.extraction_timeout,
-            do_not_unzip=args.do_not_unzip)
+            do_not_unzip=args.do_not_unzip,
+            already_processed=already_processed)
     else:
         raise ValueError("Unknown operation: " + args.op)
 
-    failed_out_dir = args.output_dir if args.output_dir is not None else '.'
-    pd \
-        .DataFrame(file_status) \
-        .to_csv(os.path.join(failed_out_dir, args.file_status_name), index=False)
+    if args.op == "flatten_and_textify":
+        pd \
+            .DataFrame(file_status) \
+            .to_csv(file_status_csv, index=False)
 
 
 if __name__ == "__main__":
