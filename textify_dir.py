@@ -4,6 +4,7 @@ import logging
 import os
 import glob
 import shutil
+from isort import file
 import textract
 import pytesseract
 import warnings
@@ -89,6 +90,38 @@ def _init_pool_processes(the_lock):
     fs_lock = the_lock
 
 
+def _get_empty_file_status_dict():
+    return {
+        "input_path": [],
+        "input_filename": [],
+        "output_filename": [],
+        "status": [],
+        "details": []
+    }
+
+
+def _append_file_status(file_status, file_status_csv):
+    logger.info(f"Appending {len(file_status['input_path'])} records to file status csv")
+    if os.path.isfile(file_status_csv) and os.path.getsize(file_status_csv) > 0:
+        # Note that this does NOT really mean that the file has a correct header but we judge it
+        #   not worth it to open the file to validate it
+        pd \
+            .DataFrame(file_status) \
+            .to_csv(file_status_csv, index=False, header=False, mode='a')
+    else:
+        pd \
+            .DataFrame(file_status) \
+            .to_csv(file_status_csv, index=False, header=True, mode='w')
+
+
+def _add_file_status(file_status, input_path, input_filename, output_filename, status, details):
+    file_status["input_path"].append(input_path)
+    file_status["input_filename"].append(input_filename)
+    file_status["output_filename"].append(output_filename)
+    file_status["status"].append(status)
+    file_status["details"].append(details)
+
+
 def process_dir(
     input_dir,
     output_dir,
@@ -98,37 +131,36 @@ def process_dir(
     temp_dir=None,
     prefix="",
     do_not_unzip=False,
-    already_processed=set()
+    already_processed=set(),
+    file_status_csv="./textify_file_status.csv",
+    file_status_save_period=1000
 ):
     all_files = glob.glob(os.path.join(input_dir, "**"), recursive=True)
 
     zip_files = [fn for fn in all_files if is_zipfile(fn)]
-    file_status = {
-        "input_path": [],
-        "input_filename": [],
-        "output_filename": [],
-        "status": [],
-        "details": []
-    }
+    file_status = _get_empty_file_status_dict()
     if len(zip_files) > 0:
         logger.info(f"Processing archives in {input_dir} with prefix \"{prefix}\"...")
         for zip_fn in tqdm(zip_files, leave=False, desc=prefix):
             with TemporaryDirectory(dir=temp_dir) as temp_dir_name:
-                file_status["input_path"].append(prefix)
-                file_status["input_filename"].append(os.path.basename(zip_fn))
-                file_status["output_filename"].append("")
                 try:
                     Archive(zip_fn).extractall(os.path.join(temp_dir_name))
                 except PatoolError:
                     logger.warning(f"Failed to extract {zip_fn} with prefix \"{prefix}\"")
-                    file_status["status"].append("Unzip failed")
+                    cur_file_status = "Unzip failed"
                     continue
                 except RuntimeError:
                     logger.warning(f"Encrypted: {zip_fn} with prefix \"{prefix}\"")
-                    file_status["status"].append("Zip file encrypted")
+                    cur_file_status = "Zip file encrypted"
                     continue
-                file_status["status"].append("Unzipped successfully")
-                file_status["details"].append("")
+                cur_file_status = "Unzipped successfully"
+                _add_file_status(
+                    file_status,
+                    prefix,
+                    os.path.basename(zip_fn),
+                    "",
+                    cur_file_status,
+                    "")
                 zip_file_status = process_dir(
                     temp_dir_name,
                     output_dir,
@@ -138,9 +170,14 @@ def process_dir(
                     prefix=prefix + os.path.basename(zip_fn) + "/",
                     temp_dir=temp_dir,
                     do_not_unzip=do_not_unzip,
-                    already_processed=already_processed)
+                    already_processed=already_processed,
+                    file_status_csv=file_status_csv,
+                    file_status_save_period=file_status_save_period)
                 for key, val in file_status.items():
                     file_status[key] = val + zip_file_status[key]
+                if len(file_status["input_path"]) > file_status_save_period:
+                    _append_file_status(file_status, file_status_csv)
+                    file_status = _get_empty_file_status_dict()
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
     with Pool(processes=num_pool_procs, initializer=_init_pool_processes, initargs=(fs_lock,)) as pool:
         jobs = [
@@ -156,16 +193,23 @@ def process_dir(
                 output_fn, res, details = job.get(timeout=pool_timeout)
             except TimeoutError:
                 res, details = "Timeout", ""
-            file_status["input_path"].append(prefix)
-            file_status["input_filename"].append(non_zip_fn)
-            file_status["output_filename"].append(output_fn)
             if res is not None:
                 logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
-                file_status["status"].append(res)
-                file_status["details"].append(details)
+                cur_file_status = res
+                cur_file_details = details
             else:
-                file_status["status"].append("Success")
-                file_status["details"].append("")
+                cur_file_status = "Success"
+                cur_file_details = ""
+            _add_file_status(
+                file_status,
+                prefix,
+                non_zip_fn,
+                output_fn,
+                cur_file_status,
+                cur_file_details)
+            if len(file_status["input_path"]) > file_status_save_period:
+                _append_file_status(file_status, file_status_csv)
+                file_status = _get_empty_file_status_dict()
     
     return file_status
 
@@ -263,6 +307,12 @@ def main():
         help="CSV filename to store status of extracted files to",
     )
     parser.add_argument(
+        "--file_status_save_period",
+        type=int,
+        default=1000,
+        help="How often to append to the file status CSV file"
+    )
+    parser.add_argument(
         "--do_not_unzip",
         action="store_true",
         help="Do not unzip any zip files in the input_dir",
@@ -352,7 +402,9 @@ def main():
             num_pool_procs=args.num_processes,
             pool_timeout=args.extraction_timeout,
             do_not_unzip=args.do_not_unzip,
-            already_processed=already_processed)
+            already_processed=already_processed,
+            file_status_csv=file_status_csv,
+            file_status_save_period=args.file_status_save_period)
     else:
         raise ValueError("Unknown operation: " + args.op)
 
