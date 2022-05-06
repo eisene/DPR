@@ -343,6 +343,7 @@ def main():
 
     if args.verbose:
         logger.setLevel(logging.INFO)
+        consoleHandler.setLevel(logging.INFO)
     else:
         warnings.filterwarnings("ignore")
 
