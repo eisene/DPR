@@ -187,6 +187,7 @@ def process_dir(
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
     with Pool(
         processes=num_pool_procs,
+        maxtasksperchild=1,
         initializer=_init_pool_processes,
         initargs=(fs_lock,)
     ) as pool:
