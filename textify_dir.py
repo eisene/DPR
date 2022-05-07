@@ -199,28 +199,51 @@ def process_dir(
                 os.path.isfile(fn) and
                 not (prefix + os.path.basename(fn)) in already_processed
         ]
-        res = pool.imap_unordered(_file_op, job_args)
-        for cur_res in tqdm(res, total=len(job_args), leave=False):
-            input_fn, (output_fn, res, details) = cur_res
-            non_zip_fn = os.path.basename(input_fn)
-            if res is not None:
-                logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
-                cur_file_status = res
-                cur_file_details = details
-            else:
-                cur_file_status = "Success"
-                cur_file_details = ""
+        pool_res = pool.imap_unordered(_file_op, job_args)
+        non_timed_out = set()
+        with tqdm(total=len(job_args), leave=False) as pbar:
+            while True:
+                try:
+                    cur_res = pool_res.next(pool_timeout)
+                except StopIteration:
+                    break
+                except TimeoutError:
+                    logger.warning(f"Timeout during processing prefix \"{prefix}\"")
+                    break
+                input_fn, (output_fn, res, details) = cur_res
+                non_zip_fn = os.path.basename(input_fn)
+                non_timed_out.add(non_zip_fn)
+                if res is not None:
+                    logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
+                    cur_file_status = res
+                    cur_file_details = details
+                else:
+                    cur_file_status = "Success"
+                    cur_file_details = ""
+                _add_file_status(
+                    file_status,
+                    prefix,
+                    non_zip_fn,
+                    output_fn,
+                    cur_file_status,
+                    cur_file_details)
+                if len(file_status["input_path"]) > file_status_save_period:
+                    _append_file_status(file_status, file_status_csv)
+                    file_status = _get_empty_file_status_dict()
+                pbar.update(1)
+        timed_out = set([os.path.basename(fn) for fn, _, _, _ in job_args]) - non_timed_out
+        for timed_out_fn in timed_out:
             _add_file_status(
                 file_status,
                 prefix,
-                non_zip_fn,
-                output_fn,
-                cur_file_status,
-                cur_file_details)
+                timed_out_fn,
+                "",
+                "Timeout",
+                "")
             if len(file_status["input_path"]) > file_status_save_period:
                 _append_file_status(file_status, file_status_csv)
                 file_status = _get_empty_file_status_dict()
-    
+
     return file_status
 
 
