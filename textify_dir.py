@@ -122,6 +122,12 @@ def _add_file_status(file_status, input_path, input_filename, output_filename, s
     file_status["details"].append(details)
 
 
+def _file_op(args):
+    fn, prefix, output_dir, file_op_lambda = args
+    res = file_op_lambda(fn, prefix, output_dir)
+    return fn, res
+
+
 def process_dir(
     input_dir,
     output_dir,
@@ -179,20 +185,23 @@ def process_dir(
                     _append_file_status(file_status, file_status_csv)
                     file_status = _get_empty_file_status_dict()
     logger.info(f"Processing files in {input_dir} with prefix \"{prefix}\"...")
-    with Pool(processes=num_pool_procs, initializer=_init_pool_processes, initargs=(fs_lock,)) as pool:
-        jobs = [
-            (pool.apply_async(file_op_lambda, (fn, prefix, output_dir)), os.path.basename(fn))
+    with Pool(
+        processes=num_pool_procs,
+        initializer=_init_pool_processes,
+        initargs=(fs_lock,)
+    ) as pool:
+        job_args = [
+            (fn, prefix, output_dir, file_op_lambda)
             for fn in all_files
             if
                 not is_zipfile(fn) and
                 os.path.isfile(fn) and
-                not (prefix + os.path.basename(fn)) in already_processed]
-        for job, non_zip_fn in tqdm(jobs, leave=False):
-            output_fn = ""
-            try:
-                output_fn, res, details = job.get(timeout=pool_timeout)
-            except TimeoutError:
-                res, details = "Timeout", ""
+                not (prefix + os.path.basename(fn)) in already_processed
+        ]
+        res = pool.imap_unordered(_file_op, job_args)
+        for cur_res in tqdm(res, total=len(job_args), leave=False):
+            input_fn, (output_fn, res, details) = cur_res
+            non_zip_fn = os.path.basename(input_fn)
             if res is not None:
                 logger.warning(f"{res} during processing {non_zip_fn} with prefix \"{prefix}\"")
                 cur_file_status = res
