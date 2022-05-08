@@ -455,9 +455,7 @@ def main():
         raise ValueError("Unknown operation: " + args.op)
 
     if args.op == "flatten_and_textify":
-        pd \
-            .DataFrame(file_status) \
-            .to_csv(file_status_csv, index=False)
+        _append_file_status(file_status, file_status_csv)
 
 
 if __name__ == "__main__":
