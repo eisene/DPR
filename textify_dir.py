@@ -49,7 +49,7 @@ parseable_exts = {".csv", ".doc", ".docx", ".eml", ".epub", ".gif", ".jpg", ".jp
     ".tiff", ".tif", ".txt", ".wav", ".xlsx", ".xls"}
 
 fs_lock = Lock()
-MAX_VIRTUAL_MEMORY = 10 * 1024**3   # 10 GiB
+max_process_memory = 10 * 1024**3   # 10 GiB default
 
 
 def get_normalized_ext(fn):
@@ -90,7 +90,7 @@ def _non_conflicting_fn(fn, output_dir):
 def _init_pool_processes(the_lock):
     global fs_lock
     fs_lock = the_lock
-    resource.setrlimit(resource.RLIMIT_AS, (MAX_VIRTUAL_MEMORY, resource.RLIM_INFINITY))
+    resource.setrlimit(resource.RLIMIT_AS, (max_process_memory, resource.RLIM_INFINITY))
 
 
 def _get_empty_file_status_dict():
@@ -312,6 +312,8 @@ def textify_fn(fn, _, output_dir):
 
 
 def main():
+    global max_process_memory
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--input_dir",
@@ -365,6 +367,12 @@ def main():
         help="Number of parallel processes to use for extraction",
     )
     parser.add_argument(
+        "--max_process_memory",
+        type=int,
+        default=10,
+        help="Maximum GiB of pool worker memory",
+    )
+    parser.add_argument(
         "--extraction_timeout",
         type=int,
         default=600,
@@ -388,6 +396,7 @@ def main():
 
     failed_out_dir = args.output_dir if args.output_dir is not None else '.'
     file_status_csv = os.path.join(failed_out_dir, args.file_status_name)
+    max_process_memory = args.max_process_memory
 
     if args.op == "list_extensions":
         all_exts = set()
