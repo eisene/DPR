@@ -8,6 +8,7 @@ from isort import file
 import textract
 import pytesseract
 import warnings
+import resource
 
 from tqdm import tqdm
 from multiprocessing import Pool, Lock, TimeoutError
@@ -48,6 +49,7 @@ parseable_exts = {".csv", ".doc", ".docx", ".eml", ".epub", ".gif", ".jpg", ".jp
     ".tiff", ".tif", ".txt", ".wav", ".xlsx", ".xls"}
 
 fs_lock = Lock()
+MAX_VIRTUAL_MEMORY = 10 * 1024**3   # 10 GiB
 
 
 def get_normalized_ext(fn):
@@ -88,6 +90,7 @@ def _non_conflicting_fn(fn, output_dir):
 def _init_pool_processes(the_lock):
     global fs_lock
     fs_lock = the_lock
+    resource.setrlimit(resource.RLIMIT_AS, (MAX_VIRTUAL_MEMORY, resource.RLIM_INFINITY))
 
 
 def _get_empty_file_status_dict():
