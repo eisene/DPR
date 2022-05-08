@@ -396,7 +396,7 @@ def main():
 
     failed_out_dir = args.output_dir if args.output_dir is not None else '.'
     file_status_csv = os.path.join(failed_out_dir, args.file_status_name)
-    max_process_memory = args.max_process_memory
+    max_process_memory = args.max_process_memory * 1024**3
 
     if args.op == "list_extensions":
         all_exts = set()
