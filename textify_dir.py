@@ -45,7 +45,7 @@ parseable_exts = {".csv", ".doc", ".docx", ".eml", ".epub", ".gif", ".jpg", ".jp
     ".tiff", ".tif", ".txt", ".wav", ".xlsx", ".xls"}
 
 fs_lock = Lock()
-max_process_memory = 10 * 1024**3   # 10 GiB default
+max_process_memory = 20 * 1024**3   # 10 GiB default
 
 
 def get_normalized_ext(fn):
@@ -365,7 +365,7 @@ def main():
     parser.add_argument(
         "--max_process_memory",
         type=int,
-        default=10,
+        default=20,
         help="Maximum GiB of pool worker memory",
     )
     parser.add_argument(
