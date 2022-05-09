@@ -153,7 +153,7 @@ def process_dir(
         for zip_fn in tqdm(zip_files, leave=False, desc=prefix):
             with TemporaryDirectory(dir=temp_dir) as temp_dir_name:
                 try:
-                    Archive(zip_fn).extractall(os.path.join(temp_dir_name))
+                    Archive(zip_fn, password="russia_sucks").extractall(os.path.join(temp_dir_name))
                 except PatoolError:
                     logger.warning(f"Failed to extract {zip_fn} with prefix \"{prefix}\"")
                     cur_file_status = "Unzip failed"
