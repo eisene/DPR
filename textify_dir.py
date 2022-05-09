@@ -4,7 +4,6 @@ import logging
 import os
 import glob
 import shutil
-from isort import file
 import textract
 import pytesseract
 import warnings
@@ -17,9 +16,6 @@ from pyunpack import Archive, PatoolError
 from email.parser import Parser as EmailParser
 from email.policy import default
 from openpyxl import load_workbook
-from xlrd.compdoc import CompDocError
-from pytesseract.pytesseract import TesseractError
-from zipfile import BadZipFile
 
 import numpy as np
 import pandas as pd
